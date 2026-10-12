@@ -15,6 +15,7 @@ from homeassistant.components.knx.const import (
 )
 from homeassistant.components.knx.storage.config_store import (
     STORAGE_KEY as KNX_CONFIG_STORAGE_KEY,
+    group_addresses_in,
     to_storage_dict,
 )
 from homeassistant.components.knx.storage.const import CONF_DATA
@@ -373,6 +374,85 @@ async def test_delete_entity(
 
     assert not entity_registry.async_get(test_entity_id)
     assert not hass_storage[KNX_CONFIG_STORAGE_KEY]["data"]["entities"].get("switch")
+
+
+async def test_disabled_entity(
+    hass: HomeAssistant,
+    knx: KNXTestKit,
+    entity_registry: er.EntityRegistry,
+    hass_ws_client: WebSocketGenerator,
+    hass_storage: dict[str, Any],
+    create_ui_entity: KnxEntityGenerator,
+) -> None:
+    """Test a disabled entity keeps its group addresses and can be edited."""
+    await knx.setup_integration()
+    client = await hass_ws_client(hass)
+
+    test_entity = await create_ui_entity(
+        platform=Platform.SWITCH,
+        knx_data={"ga_switch": {"write": "1/2/3"}},
+        entity_data={"name": "Test"},
+    )
+    test_entity_id = test_entity.entity_id
+    identifier = {
+        "platform": Platform.SWITCH,
+        "unique_id": test_entity.unique_id,
+        "ui": True,
+    }
+
+    entity_registry.async_update_entity(
+        test_entity_id, disabled_by=er.RegistryEntryDisabler.USER
+    )
+    await hass.async_block_till_done()
+    assert hass.states.get(test_entity_id) is None
+
+    # the disabled entity is still reported for its group address
+    await client.send_json_auto_id({"type": "knx/get_entities_by_group"})
+    res = await client.receive_json()
+    assert res["success"], res
+    assert res["result"] == {"1/2/3": [identifier]}
+
+    # the disabled entity can be updated
+    await client.send_json_auto_id(
+        {
+            "type": "knx/update_entity",
+            "platform": Platform.SWITCH,
+            "entity_id": test_entity_id,
+            "data": {
+                "entity": {"name": "Updated name"},
+                "knx": {"ga_switch": {"write": "4/5/6"}},
+            },
+        }
+    )
+    res = await client.receive_json()
+    assert res["success"], res
+    assert res["result"]["success"]
+    assert (
+        hass_storage[KNX_CONFIG_STORAGE_KEY]["data"]["entities"]["switch"][
+            test_entity.unique_id
+        ]["knx"]["ga_switch"]["write"]
+        == "4/5/6"
+    )
+    assert hass.states.get(test_entity_id) is None
+
+    await client.send_json_auto_id({"type": "knx/get_entities_by_group"})
+    res = await client.receive_json()
+    assert res["success"], res
+    assert res["result"] == {"4/5/6": [identifier]}
+
+    # the disabled entity can be deleted
+    await client.send_json_auto_id(
+        {"type": "knx/delete_entity", "entity_id": test_entity_id}
+    )
+    res = await client.receive_json()
+    assert res["success"], res
+    assert not entity_registry.async_get(test_entity_id)
+    assert not hass_storage[KNX_CONFIG_STORAGE_KEY]["data"]["entities"].get("switch")
+
+    await client.send_json_auto_id({"type": "knx/get_entities_by_group"})
+    res = await client.receive_json()
+    assert res["success"], res
+    assert res["result"] == {}
 
 
 async def test_delete_entity_error(
@@ -1305,6 +1385,58 @@ TYPED_CONFIG_CASES = [
         id="select_custom",
     ),
 ]
+
+
+def test_group_addresses_in() -> None:
+    """Test group addresses are collected from nested options and lists."""
+    light = validate_entity_data(
+        {
+            CONF_PLATFORM: Platform.LIGHT,
+            CONF_DATA: {
+                "entity": {"name": "test"},
+                "knx": {
+                    "ga_brightness": {"write": "1/0/1", "state": "1/0/2"},
+                    "color": {
+                        "ga_red_brightness": {"write": "1/2/1", "passive": ["1/2/9"]},
+                        "ga_green_brightness": {"write": "1/2/2", "state": "1/2/3"},
+                        "ga_blue_brightness": {"write": "i-blue"},
+                    },
+                },
+            },
+        }
+    )[CONF_DATA]
+    assert {str(ga) for ga in group_addresses_in(light.knx)} == {
+        "1/0/1",
+        "1/0/2",
+        "1/2/1",
+        "1/2/9",
+        "1/2/2",
+        "1/2/3",
+        "i-blue",
+    }
+
+    select = validate_entity_data(
+        {
+            CONF_PLATFORM: Platform.SELECT,
+            CONF_DATA: {
+                "entity": {"name": "test"},
+                "knx": {
+                    "options_source": {
+                        "ga_custom": {
+                            "write": "2/0/1",
+                            "state": "2/0/2",
+                            "dpt": "5.010",
+                        },
+                        "custom_options": [
+                            {"option": "a", "value": 1},
+                            {"option": "b", "value": 2},
+                        ],
+                    },
+                },
+            },
+        }
+    )[CONF_DATA]
+    assert {str(ga) for ga in group_addresses_in(select.knx)} == {"2/0/1", "2/0/2"}
 
 
 @pytest.mark.parametrize(

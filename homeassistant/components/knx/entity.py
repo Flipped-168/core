@@ -118,8 +118,13 @@ class KnxUiEntityPlatformController(PlatformControllerBase):
     async def update_entity(
         self, entity_entry: RegistryEntry, config: KnxEntityData[Any]
     ) -> None:
-        """Update an existing UI entities configuration."""
-        await self._entity_platform.async_remove_entity(entity_entry.entity_id)
+        """Update an existing UI entities configuration.
+
+        A disabled entity was never added to the platform, so there is nothing
+        to remove - the new configuration applies once it is enabled.
+        """
+        if entity_entry.entity_id in self._entity_platform.entities:
+            await self._entity_platform.async_remove_entity(entity_entry.entity_id)
         await self.create_entity(unique_id=entity_entry.unique_id, config=config)
 
 

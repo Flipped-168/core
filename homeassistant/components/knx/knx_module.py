@@ -256,6 +256,28 @@ class KNXModule:
                 if not self.group_address_entities[ga]:
                     del self.group_address_entities[ga]
 
+    def get_group_address_entities(
+        self,
+    ) -> dict[DeviceGroupAddress, set[KnxEntityIdentifier]]:
+        """Return the entities configured for each group address.
+
+        `group_address_entities` only knows entities added to Home Assistant.
+        UI entities are taken from the config store as well, so disabled ones
+        are included as long as their configuration exists.
+        """
+        result = {
+            ga: set(identifiers)
+            for ga, identifiers in self.group_address_entities.items()
+        }
+        stored_entities = self.config_store.iter_entity_group_addresses()
+        for platform, unique_id, group_addresses in stored_entities:
+            identifier = KnxEntityIdentifier(
+                platform=platform, unique_id=unique_id, ui=True
+            )
+            for ga in group_addresses:
+                result.setdefault(ga, set()).add(identifier)
+        return result
+
     def connection_state_changed_cb(self, state: XknxConnectionState) -> None:
         """Call invoked after a KNX connection state change was received."""
         self.connected = state is XknxConnectionState.CONNECTED

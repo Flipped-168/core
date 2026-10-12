@@ -26,7 +26,10 @@ SUGGESTION_PROVIDERS: list[SuggestionProvider] = [
 def _entity_ids_by_group_address(
     hass: HomeAssistant, knx: KNXModule
 ) -> dict[str, list[str]]:
-    """Map group addresses to the ids of entities using them."""
+    """Map group addresses to the ids of entities using them.
+
+    Disabled entities are included - they still occupy their addresses.
+    """
     entity_registry = er.async_get(hass)
     return {
         str(group_address): [
@@ -39,7 +42,7 @@ def _entity_ids_by_group_address(
             )
             is not None
         ]
-        for group_address, identifiers in knx.group_address_entities.items()
+        for group_address, identifiers in knx.get_group_address_entities().items()
     }
 
 

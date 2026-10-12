@@ -1,7 +1,7 @@
 """KNX entity configuration store."""
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 import dataclasses
 from functools import partial
 import logging
@@ -17,6 +17,7 @@ from typing import (
 )
 
 from probatio import Key
+from xknx.telegram.address import DeviceGroupAddress, parse_device_group_address
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PLATFORM, Platform
@@ -46,6 +47,7 @@ from .expose_controller import (
 )
 from .knx_selector import (
     GASelector,
+    GroupAddressConfig,
     GroupSelect,
     KnxPayloadSelector,
     KnxSelectOptionsSelector,
@@ -169,6 +171,23 @@ def _storage_encoders(config_type: type, sparse: bool) -> _StorageEncoders:
         encoders.append((dc_field.name, dc_field.default, encode))
     _STORAGE_ENCODERS[config_type, sparse] = tuple(encoders)
     return _STORAGE_ENCODERS[config_type, sparse]
+
+
+def group_addresses_in(config: Any) -> Iterator[DeviceGroupAddress]:
+    """Yield the group addresses of a validated `knx` configuration.
+
+    Group select options and lists of typed configs are walked recursively.
+    """
+    if isinstance(config, GroupAddressConfig):
+        for address in (config.write, config.state, *config.passive):
+            if address is not None:
+                yield parse_device_group_address(address)
+    elif isinstance(config, list):
+        for item in config:
+            yield from group_addresses_in(item)
+    elif dataclasses.is_dataclass(config) and not isinstance(config, type):
+        for dc_field in dataclasses.fields(config):
+            yield from group_addresses_in(getattr(config, dc_field.name))
 
 
 class PlatformControllerBase(ABC):
@@ -366,6 +385,27 @@ class KNXConfigStore:
             )
             if registry_entry.unique_id in unique_ids
         ]
+
+    def iter_entity_group_addresses(
+        self,
+    ) -> Iterator[tuple[str, str, set[DeviceGroupAddress]]]:
+        """Yield platform, unique_id and group addresses of each stored entity.
+
+        Invalid configurations are skipped - their platform reports them on setup.
+        """
+        for platform, configs in self.data["entities"].items():
+            for unique_id, config in configs.items():
+                try:
+                    result = validate_entity_data(
+                        {CONF_PLATFORM: platform, CONF_DATA: config}
+                    )
+                except EntityStoreValidationException:
+                    continue
+                yield (
+                    platform,
+                    unique_id,
+                    set(group_addresses_in(result[CONF_DATA].knx)),
+                )
 
     @callback
     def get_exposes(self) -> dict[str, ExposeConfig]:
