@@ -457,12 +457,16 @@ def learn_more_url(platform: str) -> str:
 
 
 async def async_cleanup_device_registry(
-    hass: HomeAssistant, device_id: str | None, config_entry_id: str | None
+    hass: HomeAssistant,
+    device_id: str | None,
+    config_entry_id: str | None,
+    include_disabled_entities: bool = False,
 ) -> None:
     """Clean up the device registry after MQTT removal.
 
     Remove MQTT from the device registry entry if there are no remaining
-    entities, triggers, tags or child devices.
+    entities, triggers, tags or child devices. Disabled entities only keep
+    the device when include_disabled_entities is set.
     """
     # Local import to avoid circular dependencies
     from . import device_trigger, tag  # noqa: PLC0415
@@ -478,7 +482,9 @@ async def async_cleanup_device_registry(
         # Removing a parent device also removes its child devices
         and not dr.async_entries_for_parent_device(device_registry, device_id)
         and not er.async_entries_for_device(
-            entity_registry, device_id, include_disabled_entities=False
+            entity_registry,
+            device_id,
+            include_disabled_entities=include_disabled_entities,
         )
         and not await device_trigger.async_get_triggers(hass, device_id)
         and not tag.async_has_tags(hass, device_id)
@@ -486,7 +492,10 @@ async def async_cleanup_device_registry(
         device_registry.async_remove_device(device_id)
         if isinstance(device, dr.ChildDeviceEntry):
             await async_cleanup_device_registry(
-                hass, device.parent_device_id, config_entry_id
+                hass,
+                device.parent_device_id,
+                config_entry_id,
+                include_disabled_entities,
             )
 
 
