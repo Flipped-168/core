@@ -462,7 +462,7 @@ async def async_cleanup_device_registry(
     """Clean up the device registry after MQTT removal.
 
     Remove MQTT from the device registry entry if there are no remaining
-    entities, triggers, tags or sub devices.
+    entities, triggers, tags or child devices.
     """
     # Local import to avoid circular dependencies
     from . import device_trigger, tag  # noqa: PLC0415
@@ -475,7 +475,7 @@ async def async_cleanup_device_registry(
         and (device := device_registry.async_get(device_id)) is not None
         # Only remove the device if it is owned by the MQTT config entry
         and device.config_entry_id == config_entry_id
-        # Removing a parent device also removes its sub devices
+        # Removing a parent device also removes its child devices
         and not dr.async_entries_for_parent_device(device_registry, device_id)
         and not er.async_entries_for_device(
             entity_registry, device_id, include_disabled_entities=False
