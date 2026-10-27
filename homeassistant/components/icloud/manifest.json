@@ -1,7 +1,12 @@
 {
   "domain": "icloud",
   "name": "Apple iCloud",
-  "codeowners": ["@Quentame", "@nzapponi"],
+  "categories": [
+    "presence_location.phones_companion_apps",
+    "productivity_information.calendars_todos",
+    "productivity_information.documents_photos"
+  ],
+  "codeowners": ["@Quentame", "@nzapponi", "@timlaing"],
   "config_flow": true,
   "dependencies": ["http"],
   "documentation": "https://www.home-assistant.io/integrations/icloud",

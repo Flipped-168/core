@@ -1,6 +1,7 @@
 """Tests for hassfest translations."""
 
 from dataclasses import replace
+import json
 from pathlib import Path
 
 import probatio
@@ -10,6 +11,54 @@ from script.hassfest import translations
 from script.hassfest.model import Config
 
 from . import get_integration
+
+
+@pytest.mark.parametrize(
+    ("reference", "expected_errors"),
+    [
+        ("common::test", []),
+        (
+            "common::missing",
+            [
+                "strings.json::config::error::cannot_connect contains invalid reference"
+                "common::missing: Could not find missing"
+            ],
+        ),
+    ],
+)
+def test_validate_uses_core_path(
+    config: Config,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    reference: str,
+    expected_errors: list[str],
+) -> None:
+    """Resolve translation references from the configured Core path, not the cwd."""
+    core_path = tmp_path / "core"
+    integration_path = core_path / "homeassistant/components/test_integration"
+    integration_path.mkdir(parents=True)
+    (core_path / "homeassistant/strings.json").write_text(
+        json.dumps({"common": {"test": "Test"}})
+    )
+    (integration_path / "strings.json").write_text(
+        json.dumps(
+            {
+                "config": {
+                    "step": {"user": {"title": "Test"}},
+                    "error": {"cannot_connect": f"[%key:{reference}%]"},
+                }
+            }
+        )
+    )
+    config = replace(config, root=core_path)
+    integration = replace(
+        get_integration("test_integration", config), path=integration_path
+    )
+    monkeypatch.chdir(tmp_path)
+
+    translations.validate({integration.domain: integration}, config)
+
+    assert [error.error for error in integration.errors] == expected_errors
 
 
 def test_string_with_no_placeholders_in_single_quotes() -> None:
@@ -586,3 +635,60 @@ def test_homeassistant_schema_invalid_integration_category(
 
     with pytest.raises(probatio.Invalid):
         schema({"integration_category": integration_category})
+
+
+INTEGRATION_CONNECTIVITY_STRINGS = {
+    "integration_connectivity": {
+        "zigbee": {
+            "name": "Zigbee",
+            "description": "Zigbee devices, through a Zigbee radio or a bridge.",
+        },
+        "cloud": {
+            "name": "Cloud",
+            "description": "Services on the internet, like a manufacturer's cloud.",
+        },
+    },
+}
+
+
+def test_homeassistant_schema_integration_connectivity(config: Config) -> None:
+    """Test the homeassistant integration accepts connectivity values."""
+    integration = get_integration("homeassistant", config)
+    schema = translations.gen_homeassistant_schema(config, integration)
+
+    assert schema(INTEGRATION_CONNECTIVITY_STRINGS) == INTEGRATION_CONNECTIVITY_STRINGS
+
+
+def test_integration_connectivity_only_for_homeassistant(config: Config) -> None:
+    """Test other integrations can't define connectivity values."""
+    integration = get_integration("test_integration", config)
+    schema = translations.gen_strings_schema(config, integration)
+
+    with pytest.raises(probatio.Invalid, match="not a valid option"):
+        schema(INTEGRATION_CONNECTIVITY_STRINGS)
+
+
+@pytest.mark.parametrize(
+    "integration_connectivity",
+    [
+        {"Zigbee": {"name": "Zigbee", "description": "Zigbee devices."}},
+        {"zigbee": {"name": "Zigbee"}},
+        {"zigbee": {"description": "Zigbee devices."}},
+        {
+            "zigbee": {
+                "name": "Zigbee",
+                "description": "Zigbee devices.",
+                "subcategory": {"coordinators": {"name": "Coordinators"}},
+            }
+        },
+    ],
+)
+def test_homeassistant_schema_invalid_integration_connectivity(
+    config: Config, integration_connectivity: dict
+) -> None:
+    """Test invalid connectivity values are rejected."""
+    integration = get_integration("homeassistant", config)
+    schema = translations.gen_homeassistant_schema(config, integration)
+
+    with pytest.raises(probatio.Invalid):
+        schema({"integration_connectivity": integration_connectivity})
